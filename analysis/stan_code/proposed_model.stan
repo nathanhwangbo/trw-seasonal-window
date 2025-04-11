@@ -182,7 +182,7 @@ model {
 
   mu ~ normal(0,2);
 
-  sigma_ar ~ normal(.5, .5);
+  sigma_ar ~ normal(0, 5);
   alpha_ar ~ std_normal();
 
   clim_mis[1] ~ normal(mu,sigma_ar);
