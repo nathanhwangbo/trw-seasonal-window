@@ -1,0 +1,104 @@
+---
+title: "Prior Eliciation"
+format: html
+---
+
+An overview of the proposed model can be written as
+
+$$
+\begin{aligned}
+\log(\text{tree ring width}) &= \beta_{0i} + \beta_{age}\text{age}_{i,t} + \beta_c \text{climate}_t + \eta_t + \epsilon_{i,t} \\
+\text{climate}_t &= \sum_{j=1}^{12} w_j \text{climate}_{t_j} \\
+w_m &= \frac{\exp(\theta_m)}{\sum_{j=1}^{12} \exp(\theta_j)} \\
+\theta_m &\sim N_{12}(w_{input}, \Sigma)
+\end{aligned}
+$$ 
+
+The monthly weights $w_m$ are parameters learned from the data to estimate the optimal reconstruction season. These weights are often difficult to learn because the tree ring widths are only available at annual resolution rather than monthly. If the proxies do not have sufficiently large signal to noise ratio, the statistical model will struggle to identify these parameters. The parameter $\theta$ is an unconstrained version of the weights, with a multivariate normal prior. To help aid with model identifiability, the modeler can specify $w_{input}$ to encode prior information about what months are most important for the reconstructions. This small notebook is intended to illustrate one method of choosing $w_{input}$.
+
+Expanding on the outline of the proposed model above (see also `/analysis/stan_code/proposed_model.stan`), the full prior on the monthly weights is parametrized as follows:
+
+$$
+\begin{aligned}
+w_m &= \frac{\exp(\theta_m)}{\sum_{j=1}^{12} \exp(\theta_j)} \\
+\theta_m &\sim N_{12}(w_{input}, \Sigma) \\
+\Sigma_{j,k} &= 
+    \begin{cases}
+        \alpha^2 \exp\left\{-\frac{1}{2\rho^2}\min\{k-j, j + 12 - k\}\right\} & j < k \\
+        \alpha^2 + \sigma^2_{w,j} + 0.001 & j = k
+    \end{cases} \\
+\alpha_{(0,1)} &\sim N(0,1) \\
+\rho &\sim \text{Inverse-Gamma}(5,5) \\
+\sigma^2_{w,j} &\sim N(0, 1) \\
+\end{aligned}
+$$
+
+The domain expert can easily specify $w_{input}$, a vector of length 12 which is a prior guess at to which seasons the proxy is sensitive to. The relative size of the elements in the vector indicate the strength of this relationship. For instance, if there was a strong indication that the proxies are sensitive to JJA, then an initial guess for $w_{input}$ might be the vector $(0,0,0,0,0,1,1,1,0,0,0, 0)$. From this guess, we can then sample from this prior distribution and see what the resulting weights look like.
+
+Sampling from the prior can be done easily in `stan` by creating a simplified `stan` script which starts from the full model (e.g. `/analysis/stan_code/proposed_model.stan`), and moving weight-related parameters to the `generated_quantities` block. This is done in `/analysis/stan_code/prior_sim_w.stan`.
+
+For example, this line was originally in the `model` block of `generated quantities`: `theta ~ multi_normal(w_param,K)`, and turns into `theta = multi_normal_rng(w_param,K)` in the `generated quantities` block of the new script. 
+
+Quick note: for truncated parameters (e.g. parameters that are constrained to be positive), it is often easier to keep these parameters in the model block rather than moving them to generated quantities block. To illustrate this, we keep `sq_sigma_w` (e.g. $\sigma_w^2$, which is constrained to be positive) in the model block rather than moving it to the generated quantities block.
+
+
+uncertain uniform guess (used often in the manuscript)
+```{r}
+# grab a helper function to help plot the prior weights
+source(here::here("analysis", "r_code", "helpers", "plot_helpers.R"))
+
+
+# plug in w_input
+w_input_unif1 <- list(w_param = c(1,1,1,1,1,1,1,1,1,1,1,1))
+
+# sample from the prior
+fit_unif1 <- stan(here('analysis', 'stan_code', 'prior_sim_w.stan'),
+   data = w_input_unif1,
+   iter = 1000, chains = 4
+   )
+
+# plot the prior weights
+fig_weight(fit_unif1) +
+  labs(
+    title = 'prior simulations of w, with unif(1) guess'
+  )
+```
+
+
+Weak JJA prior
+```{r}
+
+w_input_jja1 <- list(w_param = c(0,0,0,0,0,1,1,1,0,0,0,0))
+fit_jja1 <- stan(here('analysis', 'stan_code', 'prior_sim_w.stan'), 
+   data = w_input_jja1,
+   iter = 1000, chains = 4
+   )
+
+fig_weight(fit_jja1) +
+  labs(
+    title = 'weak JJA prior'
+  )
+  
+```
+
+
+
+Stronger JJA prior
+```{r}
+
+w_input_jja3 <- list(w_param = c(0,0,0,0,0,3,3,3,0,0,0,0))
+fit_jja3 <- stan(here('analysis', 'stan_code', 'prior_sim_w.stan'), 
+   data = w_input_jja3,
+   iter = 1000, chains = 4
+   )
+
+fig_weight(fit_jja3) +
+  labs(
+    title = 'stronger JJA prior'
+  )
+
+
+```
+
+$w_{input}$ can continue to be tweaked until the prior distribution properly reflects expert knowledge.
+
