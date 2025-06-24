@@ -178,8 +178,9 @@ sim_cesm1_mil_data <- get_sim_cesm1_mil(mylon = -119.24, mylat = 34.92)
 # prism_set_dl_dir("C:/Users/natha/Box/climate/data/prism")
 prism_set_dl_dir(here::here('data', 'prism'))
 get_prism_monthlys(type = "ppt", year = 1895:2014, mon = 1:12, keepZip = FALSE)
+get_prism_monthlys(type = "tmean", year = 1895:2014, mon = 1:12, keepZip = FALSE)
 
-#' get prism precipitation at a given lon-lat.
+#' get prism data at a given lon-lat.
 #' helper function taken and modified from the prism documentation
 #' @param pd is the prism data, e.g. the output of prism_archive_subset()
 #' @param location is a vector of (longitude, latitude) with longitude in -180 to 180 format
@@ -225,3 +226,211 @@ prism_lobos <- new_prism_slice(prism_precip, lobos_lonlat) %>%
   )
 
 # write_csv(file = here('data', 'prism_casestudy.csv'))
+
+
+### ---
+
+# get monthly precip data for each month
+prism_tmean <- prism_archive_subset(
+  "tmean", "monthly", mon = 1:12
+)
+
+
+whitemt_lonlat <- c(-118.256, 37.634)
+prism_precip_whitemt <- new_prism_slice(prism_precip, whitemt_lonlat) %>%
+  transmute(
+    year = year(date),
+    month = month(date, label = T),
+    prcp = value
+  )
+prism_temp_whitemt <- new_prism_slice(prism_tmean, whitemt_lonlat) %>%
+  transmute(
+    year = year(date),
+    month = month(date, label = T),
+    tmean = value
+  )
+
+prism_whitemt <- inner_join(prism_precip_whitemt,
+           prism_temp_whitemt,
+           by = c('year', 'month'))
+
+# write_csv(prism_whitemt, file = here('data', 'prism_whitemtn.csv'))
+
+
+
+
+
+#### firth data
+
+# firth_lonlat <- c(-141.63, 68.65)
+
+# # # using hadcrut temp
+# get_HadCRUT_monthly_temp <- function(my_lon, my_lat, hadcrut_tidync){
+#
+#   # for some reason hyper tibble wasn't returning lon/lat/time
+#   temp_raw <- hadcrut_tidync %>%
+#     hyper_filter(latitude = index == which.min(abs(latitude - my_lat)),
+#                  longitude = index == which.min(abs(longitude - my_lon))) %>%
+#     hyper_tbl_cube()
+#   #hyper_tibble()
+#
+#   # temp
+#   temp_tibble <- enframe(temp_raw$mets$tas_mean, name = 'time1', value = "tas_mean") %>%
+#     mutate(time = temp_raw$dims$time,
+#            lon = temp_raw$dims$longitude,
+#            lat = temp_raw$dims$latitude) %>%
+#     mutate(time = myd("01-1850-01") + days(as.integer(time)))
+#
+#   message(str_glue({"lonlat is ({temp_tibble$lon[1]}, {temp_tibble$lat[1]})"}))
+#
+#
+#   # go back and check to see if rounding the time to an integer is ok.
+#   temp_tibble %>%
+#     mutate(
+#       year = year(time),
+#       month = month(time, label = T),
+#       trw_lon = my_lon,
+#       trw_lat = my_lat
+#     ) %>%
+#     select(
+#       year,
+#       month,
+#       tas_mean,
+#       temp_lon = lon,
+#       temp_lat = lat,
+#       trw_lon,
+#       trw_lat
+#     ) %>%
+#     # pivot_wider(names_from = 'month', values_from = 'tas_mean', id_cols = 'year') %>%
+#     drop_na()
+# }
+#
+#
+# temp_path <- 'E:/Projects/old-blue-oaks/data/HadCRUT.5.0.1.0.analysis.anomalies.ensemble_mean.nc'
+# hadcrut <- tidync(temp_path)
+#
+# hadcrut_firth <- get_HadCRUT_monthly_temp(firth_lonlat[1], firth_lonlat[2], hadcrut)
+# do transformations to climate first
+# firth_temp_df <- hadcrut_firth %>%
+#   dplyr::select(
+#     year,
+#     month,
+#     tmean = tas_mean
+#   )
+#
+
+# gistemp -----------------
+# gistemp_path <- 'E:/Projects/old-blue-oaks/data/gistemp250_GHCNv4.NC'
+# gis <- tidync(gistemp_path)
+#
+# get_gis_monthly_temp_dec1994 <- function(my_lon, my_lat, gis_tidync){
+#
+#   # for some reason hyper tibble wasn't returning lon/lat/time
+#   temp_raw <- gis_tidync %>%
+#     hyper_filter(lat = index == which.min(abs(lat - my_lat)),
+#                  lon = index == which.min(abs(lon - my_lon))) %>%
+#     hyper_tbl_cube()
+#   #hyper_tibble()
+#
+#   # temp
+#   temp_tibble <- enframe(temp_raw$mets$tempanomaly, name = 'time1', value = "temp_anom") %>%
+#     mutate(time = temp_raw$dims$time,
+#            lon = temp_raw$dims$lon,
+#            lat = round(temp_raw$dims$lat, 5)) %>%
+#     mutate(time = myd("01-1800-01") + days(as.integer(time)))
+#
+#   message(str_glue({"lonlat is ({temp_tibble$lon[1]}, {temp_tibble$lat[1]})"}))
+#
+#
+#   # go back and check to see if rounding the time to an integer is ok.
+#   temp_tibble %>%
+#     mutate(
+#       year = year(time),
+#       month = month(time, label = T),
+#       trw_lon = my_lon,
+#       trw_lat = my_lat
+#     ) %>%
+#     dplyr::select(
+#       year,
+#       month,
+#       temp = temp_anom,
+#       temp_lon = lon,
+#       temp_lat = lat,
+#       trw_lon,
+#       trw_lat
+#     ) %>%
+#     mutate(temp = ifelse(year == 1994 & is.na(temp), 0, temp)) %>%
+#     # pivot_wider(names_from = 'month', values_from = 'tas_mean', id_cols = 'year') %>%
+#     drop_na(temp)
+# }
+# gistemp_firth <- get_gis_monthly_temp_dec1994(firth_lonlat[1], firth_lonlat[2], gis)
+#
+#
+# # do transformations to climate first
+# firth_temp_df <- gistemp_firth %>%
+#   dplyr::select(
+#     year,
+#     month,
+#     tmean = temp
+#   )
+
+# using berkely earth temp -----------------
+temp_path <- "E:/Projects/old-blue-oaks/data/berkeleyearth_TAVG_LatLong1.nc"
+berk <- tidync(temp_path)
+
+ncmeta::nc_atts(temp_path, "time") %>%
+  tidyr::unnest(cols = c(value))
+
+#' from https://berkeleyearth.org/data/, global monthly land
+get_berkeleyearth_monthly_temp <- function(my_lon, my_lat, berk_tidync){
+
+  # for some reason hyper tibble wasn't returning lon/lat/time
+  temp_raw <- berk_tidync %>%
+    hyper_filter(latitude = index == which.min(abs(latitude - my_lat)),
+                 longitude = index == which.min(abs(longitude - my_lon))) %>%
+    hyper_tbl_cube()
+  #hyper_tibble()
+
+  # temp
+  temp_tibble <- enframe(temp_raw$mets$temperature, name = 'time1', value = "temperature") %>%
+    mutate(time = as.numeric(temp_raw$dims$time),
+           lon = temp_raw$dims$longitude,
+           lat = temp_raw$dims$latitude) %>%
+    mutate(time = date_decimal(time))
+
+  message(str_glue({"lonlat is ({temp_tibble$lon[1]}, {temp_tibble$lat[1]})"}))
+
+
+  # go back and check to see if rounding the time to an integer is ok.
+  temp_tibble %>%
+    mutate(
+      year = year(time),
+      month = month(time, label = T),
+      trw_lon = my_lon,
+      trw_lat = my_lat
+    ) %>%
+    dplyr::select(
+      year,
+      month,
+      temp = temperature,
+      temp_lon = lon,
+      temp_lat = lat,
+      trw_lon,
+      trw_lat
+    ) %>%
+    # pivot_wider(names_from = 'month', values_from = 'tas_mean', id_cols = 'year') %>%
+    drop_na()
+}
+berk_firth <- get_berkeleyearth_monthly_temp(firth_lonlat[1],
+                                    firth_lonlat[2],
+                                    berk)
+
+
+firth_temp_df <- berk_firth %>%
+  dplyr::select(
+    year,
+    month,
+    tmean = temp
+  )
+# write_csv(firth_temp_df, file = here('data', 'berk_firth.csv'))
+

@@ -14,6 +14,9 @@ library(patchwork)  # plotting
 library(rstan)
 library(tidybayes)
 
+rstan::rstan_options(auto_write = TRUE)
+
+
 
 #' Function to transform climate data (real or climate model output)
 #' Does things like transform to anomaly space, conversion to water year, and optional aggregation to some yearly average
@@ -22,7 +25,7 @@ library(tidybayes)
 #' @param w_agg vector of length 12 which sums to 1. Used if aggregating to yearly values for baseline models. defaults to NULL, which returns monthly values.
 #' @returns a dataframe of log-transformed, anomalized climate data. If w_agg is null, then dimensions will match `clim_df` with columns `water_year`, `month`, and `clim`. If `w_agg` is not NULL, then the dataframe will be of yearly values, with columns `water_year` and `clim`
 #' @example process_climate(sim_precip_df, name = "log_precip")
-process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, standardize_names = T){
+process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, standardize_names = T, water_year = T){
 
   if(standardize_names){
     #using `all_of()` is a funny trick to force R to use clim_name in the local env
@@ -35,17 +38,27 @@ process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, 
 
 
   ## convert to water year --------
+  if(water_year){
 
-  clim_df <- monthly_df %>%
-    mutate(water_year = ifelse(month %in% c('Oct', 'Nov', 'Dec'), year + 1, year)
-           # water_year = ifelse(month %in% c('Sep', 'Oct', 'Nov', 'Dec'), year + 1, year)
-    ) %>%
-    relocate(water_year) %>%
-    # delete first and last years (incomplete water year data)
-    group_by(water_year) %>%
-    mutate(num_months = n()) %>%
-    filter(num_months == 12) %>%
-    ungroup()
+    clim_df <- monthly_df %>%
+      mutate(water_year = ifelse(month %in% c('Oct', 'Nov', 'Dec'), year + 1, year)
+             # water_year = ifelse(month %in% c('Sep', 'Oct', 'Nov', 'Dec'), year + 1, year)
+      ) %>%
+      relocate(water_year) %>%
+      # delete first and last years (incomplete water year data)
+      group_by(water_year) %>%
+      mutate(num_months = n()) %>%
+      filter(num_months == 12) %>%
+      ungroup() %>%
+      select(-year) %>%
+      rename(year = water_year)
+  } else{
+    clim_df <- monthly_df %>%
+      group_by(year) %>%
+      mutate(num_months = n()) %>%
+      filter(num_months == 12)
+  }
+
 
   # model expects the order to be calendar year
   month_lookup <- tibble(
@@ -55,7 +68,7 @@ process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, 
 
   clim_df <- clim_df %>%
     left_join(month_lookup, by = 'month') %>%
-    group_by(water_year) %>%
+    group_by(year) %>%
     arrange(month_no, .by_group = T) %>%
     ungroup()
 
@@ -74,12 +87,11 @@ process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, 
   if(!is.null(w_agg)){
     yearly_climate <- clim_df %>%
       left_join(w_lookup, by = 'month') %>%
-      group_by(water_year) %>%
+      group_by(year) %>%
       summarize(
         # q: should we use clim instead of clim_anom here.
         clim = sum(w_agg * clim)
-      ) %>%
-      rename(year = water_year)
+      )
 
     return(yearly_climate)
   }
@@ -92,7 +104,7 @@ process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, 
       group_by(month) %>%
       summarize(
         clim_mean = mean(clim),
-        clim_var = var(clim)
+        clim_var = sd(clim)
       )
 
     clim_df <- clim_df %>%
@@ -106,7 +118,7 @@ process_climate <- function(monthly_climate, clim_name, w_agg = NULL, anom = T, 
     # future functions expect `clim` to be the column name.
     # future functions expet `year` to be the column name
     clim_df <- clim_df %>%
-      select(year = water_year,
+      select(year,
              month,
              clim)
   }
@@ -232,7 +244,7 @@ format_trw_linear <- function(clim_df, n_trees, snr, start_year_calib,
 #' @example format_trw_linear(sim_precip_df, 10, 1, 1500, rep(1/12, 12))
 format_trw_vslite <- function(clim_df, n_trees, snr, start_year_calib, month_nums = c(12,1,2),
                               sm_limited = T,
-                              include_extras = F){
+                              include_extras = F, ...){
 
   ### generative part: pick a first year of data for each tree
   first_year_obs <- sample(min(clim_df$year):start_year_calib, n_trees, replace = T)
@@ -247,7 +259,7 @@ format_trw_vslite <- function(clim_df, n_trees, snr, start_year_calib, month_num
 
   fake_trees_full <- make_tree_vslite(clim_df, n_trees = n_trees,
                                       month_nums = month_nums,
-                                      sigma2_w = noise, sm_limited = sm_limited)
+                                      sigma2_w = noise, sm_limited = sm_limited, ...)
 
   sim_trw_df <- fake_trees_full$sim_trw
 
@@ -471,6 +483,10 @@ make_tree_vslite <- function(sim_df, n_trees = NULL,
     left_join(sim_df, by = c('year', 'month' = 'month_no')) %$%
     cor(g_tot, precip_mmmonth)
 
+  cor_temp <- g_final_df %>%
+    left_join(sim_df, by = c('year', 'month' = 'month_no')) %$%
+    cor(g_tot, temp_c)
+
   # ---------
   # calculate trw in restricted months
   trw_norm_selectedmonths <- g_df %>%
@@ -487,7 +503,8 @@ make_tree_vslite <- function(sim_df, n_trees = NULL,
   cor_months_df <- sim_df %>%
     left_join(trw_norm_selectedmonths, by = 'year') %>%
     group_by(month_no) %>%
-    summarize(cor_mon = cor(precip_mmmonth, trw))
+    summarize(cor_mon = cor(precip_mmmonth, trw),
+              cor_mon_temp = cor(temp_c, trw))
 
 
   #--------
@@ -502,6 +519,7 @@ make_tree_vslite <- function(sim_df, n_trees = NULL,
   list(sim_trw = sim_trw_df,
        monthly_growth = g_df,
        cor_monthly = cor_precip,
+       cor_monthly_t = cor_temp,
        cor_by_month = cor_months_df,
        prop_moisture_limited = prop_moisture_limited
   )

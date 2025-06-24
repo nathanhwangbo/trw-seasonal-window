@@ -13,9 +13,14 @@ This folder contains the workhorse code to reproduce the analyses in the manuscr
 
   - testing the proposed model on simple linear pseudoproxies
   
-- ppe_vslite.R 
+- ppe_vslite_quantile.R 
 
-  - testing the proposed model on VS-Lite pseudoproxies
+  - testing the proposed model on quantile-based VS-Lite pseudoproxies
+
+- ppe_vslite_obs.R 
+
+  - testing the proposed model on observation-based VS-Lite pseudoproxies (i.e. using parameters from Breitenmoser et al 2014)
+
 
 - ppe_vslite_truncated.R 
 
@@ -32,3 +37,7 @@ This folder contains the workhorse code to reproduce the analyses in the manuscr
 - blueoaks_proposed.R 
 
   - the proposed model fit to the blue oaks data.
+
+- firth_proposed.R 
+
+  - the proposed model fit to the white spruce data.

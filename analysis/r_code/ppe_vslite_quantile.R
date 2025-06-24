@@ -7,6 +7,7 @@ options(mc.cores = nc)
 set.seed(1)
 
 calib_start_ppe <- 1950
+start_year_reconstruct <- 1600
 w_djf <- c(1/3, 1/3, rep(0, 9), 1/3)
 
 
@@ -35,9 +36,9 @@ vslite_clim_df <- sim_df %>%
   mutate(month = str_to_title(name)) %>%
   select(year, month,
          precip_mmmonth, temp_c, lat) %>%
-  process_climate(clim_name = '', anom = F, standardize_names = F) %>%
-  select(-year) %>%
-  rename(year = water_year)
+  process_climate(clim_name = '', anom = F, standardize_names = F) #%>%
+  # select(-year) #%>%
+  # rename(year = water_year)
 
 snr_ppe <- 0.75
 
@@ -76,8 +77,9 @@ df_list_ppe <- stan_setup(clim_df_ppe, trw_mod_dfs_ppe,
 
 
 # this will take a while!
-fit_ppe_vslite <- stan(file = here("analysis", "stan_code", "proposed_model.stan"),
-     iter= 5000,
+fit_ppe_vslite <- stan(file = here("analysis", "stan_code",
+                                   "proposed_model_precip.stan"),
+     iter= 1000,
      data = df_list_ppe,
      init_r = 1,
      seed = 123#,

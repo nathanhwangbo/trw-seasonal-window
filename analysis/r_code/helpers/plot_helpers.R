@@ -193,6 +193,93 @@ get_djf_pred <- function(fit, djf_df, start_year_reconstruct, start_year_calib =
   fig_df
 }
 
+#' more general version of get_djf_pred. use this instead of get_djf_pred
+#' @param fit the output of a stan model with parameter 'clim_djf'
+#' @param djf_df a dataframe that contains instrumental djf climate for a single location (one row per year)
+#' @param start_year_reconstruct an integer, the year that we want to start producing a reconstruction
+#' @param start_year_calib an integer, the first year we use for calibration.
+get_season_pred <- function(fit, season_df, varname= 'clim_djf',
+                            start_year_reconstruct, start_year_calib = 1950){
+
+  my_var <- str2lang(str_glue('{varname}[i]'))
+  season_draws <- fit %>%
+    spread_draws(!!my_var)
+
+  clim_mis <- season_draws %>%
+    summarise_draws()
+
+
+  mis_year_df <- clim_mis %>%
+    ungroup() %>%
+    mutate(year = start_year_reconstruct + i - 1,
+           clim_mean_pred = mean
+    )
+
+
+
+  fig_df <- mis_year_df %>%
+    left_join(season_df, by = 'year')
+
+  # ## get CRPS
+  #
+  #
+  # set.seed(123)
+  #
+  #
+  # start_year_obs <- min(start_year_reconstruct, min(season_df$year))
+  #
+  # # see which i correspond to reconstruction years
+  # validation_i <- mis_year_df %>%
+  #   filter(year < start_year_calib,
+  #          year > start_year_obs) %>%
+  #   pull(i)
+  #
+  # # take 2 samples of size 1000 (can modify)
+  # n_samples <- 1000
+  # n_samples_tot <- 2 * n_samples
+  # rand_order <- sample(1:n_samples_tot, size = n_samples_tot, replace = F)
+  # s1 <- rand_order[1:n_samples]
+  # s2 <- setdiff(rand_order, s1)
+  #
+  # draws1 <- season_draws %>%
+  #   ungroup() %>%
+  #   select(i, contains('clim')) %>%
+  #   filter(i %in% validation_i) %>%
+  #   group_by(i) %>%
+  #   slice(s1) %>%
+  #   group_split() %>%
+  #   map(~deframe(.x)) %>%
+  #   bind_cols(.name_repair = 'universal_quiet') %>%
+  #   as.matrix.data.frame()
+  #
+  # draws2 <- season_draws %>%
+  #   ungroup() %>%
+  #   select(i, contains('clim')) %>%
+  #   filter(i %in% validation_i) %>%
+  #   group_by(i) %>%
+  #   slice(s2) %>%
+  #   group_split() %>%
+  #   map(~deframe(.x)) %>%
+  #   bind_cols(.name_repair = 'universal_quiet') %>%
+  #   as.matrix.data.frame()
+  #
+  # # assuming clim is the name of the true target
+  # truth_vec <- fig_df %>%
+  #   filter(year < start_year_calib,
+  #          year > start_year_obs) %>%
+  #   pull(clim)
+  #
+  # yr_crps <- loo::crps(draws1, draws2, truth_vec)
+  #
+  #
+  # # combine it all together
+  # fig_df <- fig_df %>%
+  #   mutate(crps = yr_crps$estimates[1])
+
+  fig_df
+}
+
+
 #' function to extract the weighted yearly reconstruction from a stanfit object.
 #' @param fit the output of a stan model with parameter 'clim_w_yearly'
 #' @param clim_df a dataframe that contains instrumental monthly climate for a single location (one row per month-year)

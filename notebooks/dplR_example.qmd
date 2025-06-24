@@ -1,0 +1,241 @@
+---
+title: "Example with dplR"
+format: pdf
+---
+
+This notebook is meant to be a completely self-contained (i.e., no external data needed) introduction to our modeling functions. To this end, example proxies have been taken from the dplR package directly, but no analysis or model tuning has been done with the chosen archive. The output has not been validated in any way -- this notebook just shows how the code works!
+
+Data description from dplR documentation: This data set gives the raw ring widths for Norway spruce Picea abies at Rothenburg ob der Tauber, Bavaria, Germany. There are 20 series from 10 trees. Data set was created using read.rwl and saved to an .rda file using save.
+
+```{r}
+library(tidyverse) # general processing helpers
+library(AOI)       # pulling climate data
+library(climateR)  # pulling climate data
+library(here)      # file path helper
+library(dplR) 
+library(rstan)
+
+source(here::here("analysis", "r_code", "helpers", "analysis_helpers.R"))
+source(here::here("analysis", "r_code", "helpers", "plot_helpers.R"))
+
+nc <- parallelly::availableCores()
+options(mc.cores = nc)
+
+set.seed(1)
+
+# load in spruce data from zang 2010
+data(anos1)
+```
+
+
+See what the trw data looks like
+```{r}
+plot(anos1, plot.type="spag")
+plot(chron.ars(anos1))
+```
+
+Get your data into this format:
+
+```{r}
+trw_df <- anos1 %>%
+  rownames_to_column('year') %>%
+  mutate(year = as.numeric(year)) %>%
+  pivot_longer(-year, names_to = 'tree_id', values_to = 'trw') %>%
+  drop_na() %>%
+  group_by(tree_id) %>%
+  arrange(year, .by_group = T) %>%
+  mutate(age = 1:n())
+  
+trw_df_list <- group_split(trw_df)
+
+
+## check that there are no missing years
+## this should all return true
+# trw_df_list %>%
+#   map_lgl(~{
+#     .x %>%
+#       mutate(year2 = min(year) + age - 1) %$%
+#       all.equal(year, year2)
+#   })
+
+trw_df_list[[1]]
+```
+
+
+## processing TRW
+
+`process_trw` is a function that comes from this code repository, to clean up the TRW data.
+
+```{r}
+trw_dfs_mod <- process_trw(trw_df_list)
+```
+
+
+## Get a climate variable in the following format:
+
+
+In practice, you would replace this with processing of whatever instrumental measurement you would like
+
+
+Here, we're using location 49.383333N, 10.183333E [here](https://geohack.toolforge.org/geohack.php?pagename=Rothenburg_ob_der_Tauber&params=49_23_N_10_11_E_type:city(11385)_region:DE-BY)
+
+```{r}
+
+trw_loc <- geocode('Rothenburg ob der Tauber, Bavaria, Germany', pt = T)
+trw_lastyear <- summary(anos1) %>%
+  pull(last) %>%
+  max()
+
+
+precip_loc <- getTerraClim(trw_loc, varname = 'ppt', 
+                       startDate = str_glue('1958-01-01'),
+                       endDate = str_glue('{trw_lastyear}-12-31')) %>%
+                          mutate(date = ymd(date)) 
+
+
+
+
+
+
+# get your data into this format:
+clim_df <- precip_loc %>%
+  transmute(
+    year = year(date),
+    month = month(date, label = T),
+    log_precip = log(ppt_total + 0.001)
+  )
+
+
+clim_df
+```
+
+
+## Quick Exploratory Data Analaysis
+
+Some example Exploratory Data Analysis to look at the comparison between the TRW data and JJA time series. To faciliate comparison, all variables are scaled to have zero mean and unit standard deviation.
+
+```{r}
+
+jja_df <- clim_df %>%
+  filter(month %in% c('Jun', 'Jul', 'Aug')) %>%
+  group_by(year) %>%
+  summarise(jja_avg = mean(log_precip)) %>%
+  mutate(jja_avg = (jja_avg - mean(jja_avg)) / sd(jja_avg))
+
+year_df <- clim_df %>%
+  group_by(year) %>%
+  summarize(year_avg = mean(log_precip)) %>%
+  mutate(year_avg = (year_avg - mean(year_avg)) / sd(year_avg))
+
+trw_df %>%
+  mutate(trw = (trw - mean(trw))/ sd(trw)) %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(year, trw, group = tree_id), color = 'gray') +
+  geom_line(aes(year, jja_avg), color = 'red', data = jja_df) +
+  geom_line(aes(year, year_avg), color = 'blue', data = year_df) 
+
+```
+
+
+## process precip
+
+This function comes from our repository, to clean up instrumental measurements.
+
+```{r}
+
+clim_df_wateryear <- process_climate(clim_df,
+                                    clim_name = 'log_precip',
+                                    anom = T)
+```
+
+
+
+## get climatology
+
+This is used by the model to recover reconstrutions in original variable units, rather than reconstructions in anomaly space.
+
+```{r}
+# ordered jan - december
+month_clim <- clim_df %>%
+  mutate(month = as_factor(month)) %>%
+  group_by(month) %>%
+  summarise(
+    clim_mean = mean(log_precip),
+    clim_sd = sd(log_precip)
+  )
+
+month_means <- month_clim$clim_mean
+month_sds <- month_clim$clim_sd
+```
+
+
+## prepare for model fit
+
+This assumes we want to use 1980-2007 (the last year with tree ring data) for calibration
+
+`stan_setup()` is a function which comes from our repository, to get data in the particular format that stan requires. This formatting is very particular, but if you understand how input_list is supposed to look, then all of the above processing steps can be done in another language. Stan is model agnostic, and only requires this input list (e.g. can be a python list or even a json object).
+
+```{r}
+
+
+calib_start <- 1980
+unif_prior <- rep(1, 12)
+
+
+# halfyear_prior <- c(10,10,rep(1, 6), rep(10, 4))
+input_list <- stan_setup(clim_df_wateryear, trw_dfs_mod,
+                            start_year_calib = calib_start,
+                            w_param = unif_prior, 
+                            month_means = month_means,
+                            month_sds = month_sds)
+
+# take a look at the craziness of the intput
+
+input_list
+
+```
+
+
+
+## fit model
+
+This is just accessing stan through the `rstan` package. If you figure out how to get input_list in a different language, you can just as easily call stan from another programming language, or through the command line.
+
+```{r}
+fit_eg <- stan(file = here("analysis", 
+                           "stan_code", 
+                           "proposed_model.stan"),
+                  iter= 500,
+                  data = input_list,
+                  init_r = 1,
+                  seed = 123
+)
+```
+
+## sample evaluation
+
+`fig_weight()` is a function from this repository to plot the posterior distribution of the weights.
+
+```{r}
+w_learned <- fig_weight(fit_eg)
+w_learned
+```
+
+These functions are also from this repository, to help plot the reconstruction.
+
+```{r}
+
+recon_start <- min(input_list$start_years)
+yearly_fig_df <- get_yearly_pred(fit_eg, clim_df_wateryear, recon_start)
+
+start_year_obs <- min(clim_df_wateryear$year)
+fig_recon(yearly_fig_df, start_year_obs, calib_start,
+          pred_name = "clim_mean_pred",
+          truth_name = "mean_w_trueclim",
+          display_years = c(1900, 2007))[[2]] +
+  labs(title = 'eg',
+       y = 'log precip anom (sd)'
+       )
+
+```
